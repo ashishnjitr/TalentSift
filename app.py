@@ -1,16 +1,18 @@
 import streamlit as st
 import random
 import time
-import smtplib
 import urllib.parse
-from email.mime.text import MIMEText
 from google import genai
 
 # 1. Page Configuration
-st.set_page_config(page_title="TalentSift - Technical Assessment", page_icon="🔒", layout="centered")
+st.set_page_config(page_title="TalentSift - Technical Assessment", page_icon="🎯", layout="wide")
 
-# App URL used for generating invitation links
-BASE_APP_URL = st.secrets.get("APP_URL", "https://your-app.streamlit.app")
+# Fallback live URL for link generation
+BASE_APP_URL = st.secrets.get("APP_URL", "https://talentsift.streamlit.app")
+
+# Initialize global tracking database in session state (simulates a persistent database row)
+if "admin_results_db" not in st.session_state:
+    st.session_state.admin_results_db = []
 
 # 2. Dynamic Question Bank
 QUESTION_BANK = {
@@ -18,105 +20,84 @@ QUESTION_BANK = {
         {
             "theory": "Explain the difference between mutable and immutable objects in Python. Give an example of each.",
             "coding": "Write a Python function that takes a list of integers and returns a new list containing only the even numbers, squared."
-        },
-        {
-            "theory": "What is the difference between a list and a tuple? When would you choose a tuple over a list?",
-            "coding": "Write a function that counts the frequency of each character in a given string and returns it as a dictionary."
         }
     ],
     "Mid Level (5-8 years)": [
         {
             "theory": "What are Python decorators? Explain how they work and provide a practical use-case example.",
             "coding": "Write a function that flattens a deeply nested list of integers (e.g., [1, [2, [3, 4]], 5] -> [1, 2, 3, 4, 5]) without using external libraries."
-        },
-        {
-            "theory": "Explain how Python's context managers (`with` statement) manage resources behind the scenes.",
-            "coding": "Write a Python function to find the first non-repeating character in a string. Optimize for time complexity."
         }
     ],
     "Senior (9-12 years)": [
         {
             "theory": "Deeply explain Python's Global Interpreter Lock (GIL). How does it impact multi-threading versus multi-processing?",
             "coding": "Implement a custom, thread-safe caching decorator that caches function results and evicts the Least Recently Used (LRU) item when it hits a max capacity of 5 entries."
-        },
-        {
-            "theory": "How does Python handle memory management and garbage collection? Contrast reference counting with generational collection.",
-            "coding": "Given an array of intervals where intervals[i] = [start, end], merge all overlapping intervals and return an array of the non-overlapping intervals."
         }
     ],
     "Expert (12+ years)": [
         {
             "theory": "Discuss metaprogramming in Python. Explain how custom Metaclasses function and how they differ from class decorators for architectural design.",
             "coding": "Write a custom descriptor class from scratch that enforces strict runtime type-checking and value boundaries on class attributes without using third-party verification tools."
-        },
-        {
-            "theory": "Describe execution performance bottlenecks inherent to CPython. How would you design a high-throughput pipeline utilizing memory views, Cython, or slots?",
-            "coding": "Design and implement a minimal, event-driven asynchronous task runner queue from scratch using only standard-library generators or low-level select/poll mechanisms."
         }
     ]
 }
 
-# 3. Email & Notification Engine
-def send_email(to_email, subject, body_content):
-    """Generic SMTP email sender function."""
-    msg = MIMEText(body_content, "html")
-    msg["Subject"] = subject
-    msg["From"] = st.secrets["SMTP_USER"]
-    msg["To"] = to_email
-
-    try:
-        with smtplib.SMTP_SSL(st.secrets["SMTP_HOST"], st.secrets["SMTP_PORT"]) as server:
-            server.login(st.secrets["SMTP_USER"], st.secrets["SMTP_PASSWORD"])
-            server.send_mail(st.secrets["SMTP_USER"], [to_email], msg.as_string())
-        return True
-    except Exception as e:
-        st.error(f"Email delivery system failure: {e}")
-        return False
-
+# 3. AI Evaluation Engine
 def evaluate_with_ai(name, tier, theory_q, theory_a, coding_q, coding_a, duration):
     """Uses Gemini API to evaluate candidate performance based on tier criteria."""
-    client = genai.Client(api_key=st.secrets["GEMINI_API_KEY"])
-    
-    prompt = f"""
-    You are an expert technical interviewer evaluating a Python candidate mapped to the '{tier}' tier.
-    Expectations must strictly match the targeted level: Junior should be graded on foundational mechanics, while Senior/Expert must be graded stringently on optimization, architectural design, and deep technical patterns.
-    
-    Candidate: {name}
-    Metrics: Time taken to complete: {duration:.2f} seconds.
-    
-    Theory Question Served: {theory_q}
-    Candidate Theory Answer: "{theory_a}"
-    
-    Coding Question Served: {coding_q}
-    Candidate Coding Answer: "{coding_a}"
-    
-    Provide a professional hiring assessment formatted in clean HTML (no ```html wrapper code blocks, just raw HTML elements).
-    Include:
-    1. Python Core Theory Knowledge Score (0-5 rating) with strict inline justification.
-    2. Practical Coding & Algorithm Execution Score (0-5 rating) reviewing edge cases and execution correctness.
-    3. Specific Bulleted Notes on Strengths.
-    4. Specific Bulleted Notes on Area of Improvements.
-    5. 'Proctoring Flag Analysis': Assess whether a duration of {duration:.2f}s is realistically clean, unusually fast (potential copy-paste AI bypass), or abnormally prolonged for this tier.
-    """
-    
-    response = client.models.generate_content(
-        model="gemini-2.5-flash",
-        contents=prompt,
-    )
-    return response.text
+    try:
+        client = genai.Client(api_key=st.secrets["GEMINI_API_KEY"])
+        
+        prompt = f"""
+        You are an expert technical interviewer evaluating a Python candidate mapped to the '{tier}' tier.
+        
+        Candidate: {name}
+        Metrics: Time taken to complete: {duration:.2f} seconds.
+        
+        Theory Question Served: {theory_q}
+        Candidate Theory Answer: "{theory_a}"
+        
+        Coding Question Served: {coding_q}
+        Candidate Coding Answer: "{coding_a}"
+        
+        Provide a professional hiring assessment. You must precisely output your response in this exact format so it parses cleanly:
+        THEORY_SCORE: [Number between 0 and 5]
+        CODING_SCORE: [Number between 0 and 5]
+        STRENGTHS: [Provide bulleted notes]
+        IMPROVEMENTS: [Provide bulleted notes]
+        RED_FLAGS: [Assess if a duration of {duration:.2f}s is clean, abnormally fast indicating AI copy-paste, or prolonged]
+        """
+        
+        response = client.models.generate_content(
+            model="gemini-2.5-flash",
+            contents=prompt,
+        )
+        return response.text
+    except Exception as e:
+        return f"THEORY_SCORE: 0\nCODING_SCORE: 0\nSTRENGTHS: Evaluation processing skipped.\nIMPROVEMENTS: N/A\nRED_FLAGS: API Error: {str(e)}"
 
-# 4. Routing Controller (Determines Recruiter vs Candidate Mode)
+def parse_ai_report(report_text):
+    """Helper function to cleanly slice text keys out of the AI payload response."""
+    parsed = {"theory": "0", "coding": "0", "strengths": "", "improvements": "", "flags": ""}
+    for line in report_text.split("\n"):
+        if line.startswith("THEORY_SCORE:"): parsed["theory"] = line.replace("THEORY_SCORE:", "").strip()
+        elif line.startswith("CODING_SCORE:"): parsed["coding"] = line.replace("CODING_SCORE:", "").strip()
+        elif line.startswith("STRENGTHS:"): parsed["strengths"] = line.replace("STRENGTHS:", "").strip()
+        elif line.startswith("IMPROVEMENTS:"): parsed["improvements"] = line.replace("IMPROVEMENTS:", "").strip()
+        elif line.startswith("RED_FLAGS:"): parsed["flags"] = line.replace("RED_FLAGS:", "").strip()
+    return parsed
+
+
+# 4. Routing Controller
 params = st.query_params
 
 # --- INTERFACE A: CANDIDATE ASSESSMENT PORTAL ---
 if "token" in params and params.get("mode") == "candidate":
-    # Decode candidate info passed safely through URL query parameters
     candidate_name = urllib.parse.unquote(params.get("name", "Candidate"))
     candidate_email = urllib.parse.unquote(params.get("email", ""))
     candidate_phone = urllib.parse.unquote(params.get("phone", ""))
     job_tier = urllib.parse.unquote(params.get("tier", "Junior (<5 years)"))
 
-    # Initialize State Machine for Candidate Process
     if "test_step" not in st.session_state:
         st.session_state.test_step = "instructions"
     if "start_time" not in st.session_state:
@@ -125,129 +106,151 @@ if "token" in params and params.get("mode") == "candidate":
     if st.session_state.test_step == "instructions":
         st.title(f"Technical Assessment — {job_tier}")
         st.subheader(f"Welcome, {candidate_name}")
-        st.write(f"You have been invited to complete the Python screening for the **{job_tier}** tier.")
+        st.write("Your active profile session has been registered. Read the rules closely before launching your test workspace.")
         
         st.info("""
-        **Environment Regulations:**
-        - This platform tracks core processing telemetry including total window duration metrics.
-        - Navigating away from this tab or minimizing the browser will flag anomalies to the review panel.
-        - Ensure your workspace is distraction-free before clicking 'Begin'.
+        **Environment Rules:**
+        - Do not switch browser tabs, exit full screen, or change focus. This window logs active attention parameters.
+        - The test is dynamically tuned to match criteria for the experience tier assigned by your recruiter.
         """)
         
         if st.button("Begin Timed Assessment", type="primary"):
             st.session_state.start_time = time.time()
-            # Randomly lock-in selection from the tier question list so it doesn't shift during state updates
             st.session_state.selected_q = random.choice(QUESTION_BANK[job_tier])
             st.session_state.test_step = "active_test"
             st.rerun()
 
     elif st.session_state.test_step == "active_test":
-        st.title(f"Python Screening: {job_tier}")
+        st.title(f"Python Screening Workspace")
+        st.caption(f"Candidate Reference Identity: {candidate_name} ({job_tier})")
         
-        # Passive Client-Side Proctor Warning
+        # Injected deterrent component
         st.components.v1.html("""
             <script>
             document.addEventListener('visibilitychange', function() {
                 if (document.hidden) {
-                    alert("⚠️ ANOMALY DETECTED: Leaving this evaluation window is logged as an unusual red-flag behavior. Return to your workspace immediately.");
+                    alert("⚠️ SYSTEM ALERT: Leaving this window logs focus-loss context anomalies to the review panel. Return immediately.");
                 }
             });
             </script>
         """, height=0)
 
-        # Render Questions
         q_pair = st.session_state.selected_q
         
-        st.markdown("### 1. Conceptual Framework")
+        st.markdown("### 1. Conceptual Framework Analysis")
         st.write(q_pair["theory"])
-        ans_theory = st.text_area("Provide your concise conceptual analysis:", height=175, key="c_theory")
+        ans_theory = st.text_area("Provide your clear conceptual summary:", height=150, key="c_theory")
         
         st.markdown("---")
         
-        st.markdown("### 2. Sandbox Code Implementation")
+        st.markdown("### 2. Functional Sandbox Implementation")
         st.write(q_pair["coding"])
-        ans_coding = st.text_area("Write clean, executable Python code:", height=300, key="c_coding")
+        ans_coding = st.text_area("Write valid Python solution syntax here:", height=250, key="c_coding")
         
-        if st.button("Finalize and Submit Assessment", type="primary"):
+        if st.button("Complete and Finalize Assessment", type="primary"):
             end_time = time.time()
             elapsed_seconds = end_time - st.session_state.start_time
             
-            with st.spinner("Processing secure compilation & routing payload..."):
-                # Silent Backend Generation
-                evaluation_report = evaluate_with_ai(
-                    name=candidate_name,
-                    tier=job_tier,
-                    theory_q=q_pair["theory"],
-                    theory_a=ans_theory,
-                    coding_q=q_pair["coding"],
-                    coding_a=ans_coding,
+            with st.spinner("Processing solutions and recording credentials..."):
+                raw_report = evaluate_with_ai(
+                    name=candidate_name, tier=job_tier,
+                    theory_q=q_pair["theory"], theory_a=ans_theory,
+                    coding_q=q_pair["coding"], coding_a=ans_coding,
                     duration=elapsed_seconds
                 )
+                metrics = parse_ai_report(raw_report)
                 
-                # Secret routing straight to Recruiter
-                subject_line = f"📊 Evaluation Completed: {candidate_name} [{job_tier}]"
-                send_email(st.secrets["REQUESTER_EMAIL"], subject_line, evaluation_report)
+                # Push the data securely directly into internal state dictionary matrix
+                st.session_state.admin_results_db.append({
+                    "name": candidate_name,
+                    "email": candidate_email,
+                    "phone": candidate_phone,
+                    "tier": job_tier,
+                    "duration": f"{elapsed_seconds:.1f}s",
+                    "score_theory": metrics["theory"],
+                    "score_coding": metrics["coding"],
+                    "strengths": metrics["strengths"],
+                    "improvements": metrics["improvements"],
+                    "flags": metrics["flags"]
+                })
                 
                 st.session_state.test_step = "completed"
                 st.rerun()
 
     elif st.session_state.test_step == "completed":
-        st.balloons()
-        st.title("Assessment Complete")
-        st.success("Your screening solution payload has been encrypted and delivered securely to the talent acquisition manager.")
-        st.write("The active testing session is closed. You may exit your window.")
-        st.caption("Verification Reference Token: Stateless-Session-Logged")
+        st.title("Assessment Submitted")
+        st.success("Thank you! Your solution syntax block has been logged and compiled safely.")
+        st.write("The hiring manager has been notified. You can close this window now.")
 
-# --- INTERFACE B: INTERNAL RECRUITER ASSIGNMENT DASHBOARD ---
+# --- INTERFACE B: MANAGEMENT DASHBOARD & LINK GENERATOR ---
 else:
-    st.title("🎯 TalentSift Recruiter Dashboard")
-    st.write("Configure candidate credentials and generate tier-specific token invites.")
+    st.title("🎯 TalentSift Hub")
     
-    with st.form("recruiter_panel", clear_on_submit=False):
-        c_name = st.text_input("Candidate Full Name", placeholder="Jane Doe")
-        c_email = st.text_input("Candidate Email Address", placeholder="jane.doe@example.com")
-        c_phone = st.text_input("Candidate Phone Number", placeholder="+1 (555) 019-2834")
+    tab_link_gen, tab_admin_results = st.tabs(["🔗 Link Generator", "🔒 Secure Results Portal"])
+    
+    # TAB 1: GENERATE LINKS DIRECTLY
+    with tab_link_gen:
+        st.subheader("Generate Candidate Testing Tokens")
+        st.write("Fill out the target parameters below to generate an instantly shareable evaluation node link.")
         
-        c_tier = st.selectbox("Required Screening Experience Level", options=[
-            "Junior (<5 years)", 
-            "Mid Level (5-8 years)", 
-            "Senior (9-12 years)", 
-            "Expert (12+ years)"
-        ])
-        
-        submit_invite = st.form_submit_button("Generate & Dispatch Invite Link", type="primary")
-        
-    if submit_invite:
-        if c_name and c_email and c_phone:
-            # Safely URL encode strings to format parameters safely inside the query string
-            enc_name = urllib.parse.quote_plus(c_name)
-            enc_email = urllib.parse.quote_plus(c_email)
-            enc_phone = urllib.parse.quote_plus(c_phone)
-            enc_tier = urllib.parse.quote_plus(c_tier)
+        with st.form("generator_panel"):
+            c_name = st.text_input("Candidate Full Name")
+            c_email = st.text_input("Candidate Email Address")
+            c_phone = st.text_input("Candidate Phone Number")
+            c_tier = st.selectbox("Assigned Assessment Tier", options=list(QUESTION_BANK.keys()))
+            generate_btn = st.form_submit_button("Generate Assessment Link", type="primary")
             
-            # Construct distinct stateless assessment link
-            invite_url = f"{BASE_APP_URL}/?mode=candidate&token=true&name={enc_name}&email={enc_email}&phone={enc_phone}&tier={enc_tier}"
-            
-            # Formulate the email body text sent to the candidate
-            email_body = f"""
-            <h3>Technical Assessment Invitation</h3>
-            <p>Hello {c_name},</p>
-            <p>Our engineering division has initiated a dynamic Python technical screening for your application at the <b>{c_tier}</b> level.</p>
-            <p>Please launch your unique testing node link below when you are ready to begin. Note that the system logs active focus state timing to monitor background tampering metrics.</p>
-            <p><a href="{invite_url}" style="background-color:#008CBA;color:white;padding:10px 20px;text-decoration:none;border-radius:4px;display:inline-block;">Launch Assessment Portal</a></p>
-            <br>
-            <p>Best regards,<br>Talent Acquisition Team</p>
-            """
-            
-            with st.spinner("Dispatching secure invite package..."):
-                status = send_email(
-                    to_email=c_email,
-                    subject=f"Action Required: Python Technical Screening Invite - {c_tier}",
-                    body_content=email_body
-                )
+        if generate_btn:
+            if c_name and c_email and c_phone:
+                enc_name = urllib.parse.quote_plus(c_name)
+                enc_email = urllib.parse.quote_plus(c_email)
+                enc_phone = urllib.parse.quote_plus(c_phone)
+                enc_tier = urllib.parse.quote_plus(c_tier)
                 
-                if status:
-                    st.success(f"🎉 Secure invitation successfully dispatched to {c_email}!")
-                    st.info(f"**For reference, the generated verification link is:** `{invite_url}`")
+                invite_url = f"{BASE_APP_URL}/?mode=candidate&token=true&name={enc_name}&email={enc_email}&phone={enc_phone}&tier={enc_tier}"
+                
+                st.success("🎉 Testing node created successfully!")
+                st.info("Copy this tracking URL and send it directly to the candidate via your preferred platform:")
+                st.code(invite_url, language="text")
+            else:
+                st.error("Please fill in all candidate tracking fields.")
+
+    # TAB 2: SECURE RESULTS TRACKING PANELS
+    with tab_admin_results:
+        st.subheader("Administrative Results Matrix")
+        
+        # Fast local gatekeeper layer
+        admin_pass = st.text_input("Enter Admin Access Pin", type="password")
+        
+        # Change this to whatever password pin you prefer
+        if admin_pass == st.secrets.get("ADMIN_PASSWORD", "admin123"):
+            if not st.session_state.admin_results_db:
+                st.info("No candidate submissions recorded in this active server context loop yet.")
+            else:
+                st.write(f"Displaying **{len(st.session_state.admin_results_db)}** Completed Screenings:")
+                
+                for idx, record in enumerate(reversed(st.session_state.admin_results_db)):
+                    with st.expander(f"📊 {record['name']} — {record['tier']} (Theory: {record['score_theory']}/5 | Code: {record['score_coding']}/5)"):
+                        col1, col2, col3 = st.columns(3)
+                        with col1:
+                            st.markdown(f"**Email:** {record['email']}")
+                            st.markdown(f"**Phone:** {record['phone']}")
+                        with col2:
+                            st.markdown(f"**Total Duration:** {record['duration']}")
+                        with col3:
+                            st.markdown(f"**Target Level:** {record['tier']}")
+                            
+                        st.divider()
+                        st.markdown(f"#### 🔍 Behavioral & Telemetry Red Flags")
+                        st.write(record['flags'] if record['flags'] else "Clear profile timeline metrics.")
+                        
+                        st.divider()
+                        st.markdown(f"#### 👍 Notes on Strengths")
+                        st.write(record['strengths'] if record['strengths'] else "None documented.")
+                        
+                        st.divider()
+                        st.markdown(f"#### 💡 Areas for Improvement")
+                        st.write(record['improvements'] if record['improvements'] else "None documented.")
         else:
-            st.error("Validation Error: Please fill all credentials completely before initializing invite tokens.")
+            if admin_pass:
+                st.error("Invalid Administrative Key token.
