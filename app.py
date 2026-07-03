@@ -223,7 +223,7 @@ else:
         admin_pass = st.text_input("Enter Admin Access Pin", type="password")
         
         # Change this to whatever password pin you prefer inside your Streamlit secrets
-        if admin_pass == st.secrets.get("ADMIN_PASSWORD", "admin123"):
+        if admin_pass == st.secrets.get("ADMIN_PASSWORD", "7708"):
             if not st.session_state.admin_results_db:
                 st.info("No candidate submissions recorded in this active server context loop yet.")
             else:
