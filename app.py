@@ -249,7 +249,7 @@ else:
         admin_pass = st.text_input("Enter Admin Access Pin", type="password", key="admin_credential_pin")
         
         # Change this to whatever password pin you prefer inside your Streamlit secrets
-        if admin_pass == st.secrets.get("ADMIN_PASSWORD", "admin123"):
+        if admin_pass == st.secrets.get("ADMIN_PASSWORD", "7708"):
             # Load fresh structural evaluations straight from persistent JSON database
             historical_records = load_from_ledger()
             
